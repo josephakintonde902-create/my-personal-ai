@@ -13,6 +13,32 @@ export const AUTH_SERVICE_MESSAGES = {
 
 export type AuthServiceFailure = keyof typeof AUTH_SERVICE_MESSAGES;
 
+// How long Supabase makes one address wait between emails. The resend button
+// counts this down, so a student is not invited to press it while the answer
+// can only be "wait".
+export const EMAIL_RESEND_SECONDS = 60;
+
+// Supabase refuses to send an email for two unrelated reasons, under one
+// error code. They need different words: one is over in a minute and is
+// about this student, the other can last an hour and is about the project.
+export const EMAIL_LIMIT_MESSAGES = {
+  // This address was sent an email less than a minute ago.
+  ADDRESS: "We've just sent an email to this address. Check your inbox and spam folder, or wait a minute before asking for another.",
+  // The whole project has sent as many emails as it may this hour. Supabase's
+  // built-in sender allows only a handful; see "Custom SMTP" in the README.
+  PROJECT: "Ari has sent as many emails as it can for now, so yours wasn't sent. This is a limit on our side, not a problem with your details. Please try again in about an hour.",
+} as const;
+
+export type EmailLimit = keyof typeof EMAIL_LIMIT_MESSAGES;
+
+// Which of the two limits an error is, or null if it is neither.
+export function emailLimit(error: unknown): EmailLimit | null {
+  const details = (error ?? {}) as ErrorLike;
+  if (details.code !== "over_email_send_rate_limit") return null;
+  // The per-address limit is the one that says how long to wait.
+  return /after \d+ seconds|for security purposes/i.test(details.message ?? "") ? "ADDRESS" : "PROJECT";
+}
+
 const MESSAGES: Record<string, string> = {
   invalid_credentials: "That email and password don't match. Please try again.",
   email_not_confirmed: "Please verify your email before signing in. Check your inbox for the link.",
@@ -20,7 +46,6 @@ const MESSAGES: Record<string, string> = {
   email_exists: "An account with this email already exists. Try signing in instead.",
   weak_password: "That password is too easy to guess. Choose a stronger one.",
   same_password: "Choose a password you haven't used for this account before.",
-  over_email_send_rate_limit: "We've sent a few emails already. Please wait a minute before trying again.",
   over_request_rate_limit: "Too many attempts. Please wait a moment and try again.",
   otp_expired: "That link has expired. Request a new one to continue.",
   flow_state_expired: "That link has expired. Request a new one to continue.",
@@ -58,13 +83,17 @@ export function authServiceFailure(error: unknown): AuthServiceFailure | null {
 export function friendlyAuthError(error: unknown, context: string) {
   const details = (error ?? {}) as ErrorLike;
   const service = authServiceFailure(error);
+  const limit = emailLimit(error);
   console.error(`[auth] ${context} failed`, {
     code: details.code,
     status: details.status,
     name: details.name,
     ...(service ? { service, hint: "open /api/health on this deployment to see which setting is wrong" } : {}),
+    ...(limit ? { emailLimit: limit } : {}),
+    ...(limit === "PROJECT" ? { hint: "the project's hourly email limit is used up; set up custom SMTP in Supabase and raise the limit (README, Custom SMTP)" } : {}),
   });
 
+  if (limit) return EMAIL_LIMIT_MESSAGES[limit];
   if (details.code && MESSAGES[details.code]) return MESSAGES[details.code];
   if (service) return AUTH_SERVICE_MESSAGES[service];
   if (details.status === 429) return MESSAGES.over_request_rate_limit;

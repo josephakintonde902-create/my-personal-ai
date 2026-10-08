@@ -57,7 +57,12 @@ upload → claim → download → extract (→ OCR) → clean → chunk → embe
 
 - **Email links that work across devices.** The default templates only complete in the browser that requested them. To lift that, edit the templates under Authentication → Emails so the link is `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup` (Confirm sign up) and `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery` (Reset password).
 - **Google sign-in.** Create an OAuth client in Google Cloud with the redirect URI `https://<project-ref>.supabase.co/auth/v1/callback`, enter its ID and secret under Authentication → Sign In / Providers → Google, then set `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=true`. The button stays hidden until then.
-- **Custom SMTP.** Supabase's built-in email sender is limited to a few messages per hour and is meant for testing only.
+- **Custom SMTP. Required before real students sign up.** Supabase's built-in email sender is for testing only: it sends a handful of emails per hour for the whole project (two, at the time of writing), counting every verification and password-reset email for every student together. Once that is used up, each further sign-up is refused with `over_email_send_rate_limit` until the hour passes, however many different people are signing up. Nothing in the app can raise it. To lift it:
+  1. Create an account with an email provider that offers SMTP (Resend, Postmark, Brevo, Amazon SES, SendGrid and Mailgun all do) and verify a domain you own with it, by adding the SPF and DKIM records it gives you. Mail from an unverified domain goes to spam.
+  2. In Supabase, Authentication → Emails → SMTP Settings, enable custom SMTP and enter the provider's host, port, username and password, plus a sender address on the verified domain and the sender name "Ari". The password is stored by Supabase; it does not go in this app's environment variables.
+  3. In Authentication → Rate Limits, raise "Rate limit for sending emails" from its new default of 30 per hour to match the sign-ups you expect. The 60-second wait between two emails to the same address is separate, stays, and is what the "Resend verification email" button counts down.
+  
+  The server log names which limit refused an email: `emailLimit: 'PROJECT'` is the hourly one above, `emailLimit: 'ADDRESS'` is one student asking twice within a minute.
 
 ## AI tutor
 

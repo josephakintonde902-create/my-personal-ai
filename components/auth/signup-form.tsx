@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { resendVerification, signUp, type AuthFormState } from "@/app/(auth)/actions";
+import { EMAIL_RESEND_SECONDS } from "@/lib/auth/errors";
 import { FULL_NAME_MAX_LENGTH, passwordRules } from "@/lib/auth/validation";
 import { FormMessage, PasswordField, SubmitButton, TextField } from "./form-fields";
 
@@ -90,7 +91,23 @@ export function PasswordChecklist({ password }: { password: string }) {
 }
 
 function CheckEmail({ email }: { email: string }) {
-  const [state, action, pending] = useActionState(resendVerification, initialState);
+  // An email has just gone to this address, and another cannot be sent to it
+  // for a minute. The button waits that minute out instead of offering a
+  // press that can only be refused, and waits again after each resend.
+  const [secondsLeft, setSecondsLeft] = useState(EMAIL_RESEND_SECONDS);
+  const [state, action, pending] = useActionState(async (previous: AuthFormState, formData: FormData) => {
+    const result = await resendVerification(previous, formData);
+    setSecondsLeft(EMAIL_RESEND_SECONDS);
+    return result;
+  }, initialState);
+
+  useEffect(() => {
+    if (secondsLeft <= 0) return;
+    const timer = setTimeout(() => setSecondsLeft((seconds) => seconds - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [secondsLeft]);
+
+  const waiting = secondsLeft > 0;
 
   return (
     <div className="auth-status">
@@ -104,9 +121,9 @@ function CheckEmail({ email }: { email: string }) {
 
       <form action={action}>
         <input name="email" type="hidden" value={email} />
-        <button aria-busy={pending} className="auth-secondary" disabled={pending} type="submit">
+        <button aria-busy={pending} className="auth-secondary" disabled={pending || waiting} type="submit">
           {pending && <span aria-hidden="true" className="spinner dark" />}
-          {pending ? "Sending…" : "Resend verification email"}
+          {pending ? "Sending…" : waiting ? `Resend available in ${secondsLeft}s` : "Resend verification email"}
         </button>
       </form>
       <Link className="auth-back" href="/login">← Return to login</Link>
