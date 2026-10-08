@@ -1,5 +1,17 @@
 const GENERIC_ERROR = "Something went wrong on our side. Please try again in a moment.";
-const NETWORK_ERROR = "We couldn't reach Ari. Check your connection and try again.";
+
+// Sign-in runs on the server, so none of these is ever the student's own
+// connection, and none of them says so.
+export const AUTH_SERVICE_MESSAGES = {
+  // The Supabase URL or key is missing, malformed or rejected.
+  NOT_CONFIGURED: "Ari's sign-in service isn't set up correctly. This is a problem on our side, not with your details.",
+  // The server's request to Supabase never got an answer.
+  UNREACHABLE: "Ari can't reach its sign-in service right now. This is a problem on our side, not your connection. Please try again later.",
+  // Supabase answered with a server error.
+  UNAVAILABLE: "Ari's sign-in service is temporarily unavailable. Please try again in a moment.",
+} as const;
+
+export type AuthServiceFailure = keyof typeof AUTH_SERVICE_MESSAGES;
 
 const MESSAGES: Record<string, string> = {
   invalid_credentials: "That email and password don't match. Please try again.",
@@ -26,14 +38,35 @@ const MESSAGES: Record<string, string> = {
 
 type ErrorLike = { code?: string; status?: number; name?: string; message?: string };
 
+// Whether a failure is the sign-in service itself rather than anything the
+// student did, and which kind. Null for everything else.
+export function authServiceFailure(error: unknown): AuthServiceFailure | null {
+  const details = (error ?? {}) as ErrorLike;
+  if (details.name === "SupabaseConfigError") return "NOT_CONFIGURED";
+  // What Supabase's gateway answers when the key is not one of the project's.
+  if (details.status === 401 && !details.code && /api key/i.test(details.message ?? "")) return "NOT_CONFIGURED";
+  // Status 0 is a request that got no answer: an address that does not
+  // exist, or a key that cannot be put in a header.
+  if (details.status === 0) return "UNREACHABLE";
+  if (details.name === "AuthRetryableFetchError" || (details.status ?? 0) >= 500) return "UNAVAILABLE";
+  return null;
+}
+
 // Maps a Supabase error to copy that is safe to show. Raw provider and
-// database messages are logged on the server and never sent to the browser.
+// database messages are never sent to the browser, and never logged: a
+// failed request's message can repeat the key it was sent with.
 export function friendlyAuthError(error: unknown, context: string) {
   const details = (error ?? {}) as ErrorLike;
-  console.error(`[auth] ${context} failed`, { code: details.code, status: details.status, name: details.name });
+  const service = authServiceFailure(error);
+  console.error(`[auth] ${context} failed`, {
+    code: details.code,
+    status: details.status,
+    name: details.name,
+    ...(service ? { service, hint: "open /api/health on this deployment to see which setting is wrong" } : {}),
+  });
 
   if (details.code && MESSAGES[details.code]) return MESSAGES[details.code];
-  if (details.name === "AuthRetryableFetchError" || details.status === 0) return NETWORK_ERROR;
+  if (service) return AUTH_SERVICE_MESSAGES[service];
   if (details.status === 429) return MESSAGES.over_request_rate_limit;
   return GENERIC_ERROR;
 }

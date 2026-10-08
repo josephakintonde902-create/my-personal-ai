@@ -231,6 +231,7 @@ Server only (never prefix with `NEXT_PUBLIC_`):
 2. Set `NEXT_PUBLIC_SITE_URL`, and add `<site>/auth/callback` and `<site>/auth/confirm` to Supabase's Redirect URLs.
 3. Run `npm run ai:check -- --embeddings` with the production keys.
 4. Run `npm test`, `npm run typecheck`, `npm run lint` and `npm run build`.
+5. After deploying, open `<site>/api/health`. It answers `"ok": true` when the deployment can reach its Supabase project with the configured URL and key, and the AI and embedding settings are complete. Otherwise it answers 503 and says which Supabase setting is wrong (a typo in the URL, a rejected key, a missing variable); the reason for an AI setting is in the server log. It returns no values. The two `NEXT_PUBLIC_` variables are fixed into the app when it is built, so after changing them on the host, redeploy.
 
 ### What is enforced, and where
 
