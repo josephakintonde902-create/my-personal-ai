@@ -1,0 +1,27 @@
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Local environment (never commit). Every .env file is ignored except the
+# example, which holds variable names and no values.
+.env
+.env.*
+!.env.example
+
+# Keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# Deployment, editor and OS files
+.vercel/
+.DS_Store
+Thumbs.db
+npm-debug.log*
