@@ -39,6 +39,18 @@ export function emailLimit(error: unknown): EmailLimit | null {
   return /after \d+ seconds|for security purposes/i.test(details.message ?? "") ? "ADDRESS" : "PROJECT";
 }
 
+// Supabase accepted the request but its email provider did not take the
+// email: wrong SMTP host, port or password, a sender address the provider has
+// not verified, or a provider account that may only send to its owner.
+export const EMAIL_DELIVERY_MESSAGE = "Ari couldn't send your email just now. This is a problem on our side, not with your details. Please try again later.";
+
+// Supabase's fixed wording for it ("Error sending confirmation email", and
+// the same for recovery and email-change emails). It names no address.
+export function emailDeliveryFailed(error: unknown) {
+  const details = (error ?? {}) as ErrorLike;
+  return (details.status ?? 0) >= 500 && /^error sending [a-z ]*email$/i.test((details.message ?? "").trim());
+}
+
 const MESSAGES: Record<string, string> = {
   invalid_credentials: "That email and password don't match. Please try again.",
   email_not_confirmed: "Please verify your email before signing in. Check your inbox for the link.",
@@ -82,7 +94,8 @@ export function authServiceFailure(error: unknown): AuthServiceFailure | null {
 // failed request's message can repeat the key it was sent with.
 export function friendlyAuthError(error: unknown, context: string) {
   const details = (error ?? {}) as ErrorLike;
-  const service = authServiceFailure(error);
+  const undelivered = emailDeliveryFailed(error);
+  const service = undelivered ? null : authServiceFailure(error);
   const limit = emailLimit(error);
   console.error(`[auth] ${context} failed`, {
     code: details.code,
@@ -91,8 +104,10 @@ export function friendlyAuthError(error: unknown, context: string) {
     ...(service ? { service, hint: "open /api/health on this deployment to see which setting is wrong" } : {}),
     ...(limit ? { emailLimit: limit } : {}),
     ...(limit === "PROJECT" ? { hint: "the project's hourly email limit is used up; set up custom SMTP in Supabase and raise the limit (README, Custom SMTP)" } : {}),
+    ...(undelivered ? { emailDelivery: "FAILED", hint: "Supabase could not hand the email to its SMTP provider; check the SMTP host, port, username, password and sender address in Supabase, and that the provider has verified the sender's domain (README, Custom SMTP)" } : {}),
   });
 
+  if (undelivered) return EMAIL_DELIVERY_MESSAGE;
   if (limit) return EMAIL_LIMIT_MESSAGES[limit];
   if (details.code && MESSAGES[details.code]) return MESSAGES[details.code];
   if (service) return AUTH_SERVICE_MESSAGES[service];

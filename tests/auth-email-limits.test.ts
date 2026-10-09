@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createClient } from "@supabase/supabase-js";
-import { EMAIL_LIMIT_MESSAGES, EMAIL_RESEND_SECONDS, emailLimit, friendlyAuthError } from "@/lib/auth/errors";
+import { EMAIL_DELIVERY_MESSAGE, EMAIL_LIMIT_MESSAGES, EMAIL_RESEND_SECONDS, emailDeliveryFailed, emailLimit, friendlyAuthError } from "@/lib/auth/errors";
 
 const URL_OK = "https://abcdefghijklmnopqrst.supabase.co";
 // Shaped like a real key. Not real.
@@ -99,6 +99,39 @@ describe("emails Supabase refuses to send", () => {
       assert.ok(!text.includes("private-address@example.com"));
       assert.ok(!text.includes("email rate limit exceeded"));
     }
+  });
+});
+
+describe("emails Supabase's SMTP provider does not take", () => {
+  // What Supabase answers when custom SMTP is switched on but the provider
+  // refuses the email. Seen on the hosted app for every new sign-up.
+  const UNDELIVERED = { code: 500, error_code: "unexpected_failure", msg: "Error sending confirmation email" };
+
+  it("says the email could not be sent, and logs where to look", async () => {
+    const { supabase } = clientAnswering(500, UNDELIVERED);
+    const { error } = await supabase.auth.signUp({ email: "private-address@example.com", password: "correct horse battery 1" });
+    assert.equal(emailDeliveryFailed(error), true);
+
+    const { result: message, logged } = silently(() => friendlyAuthError(error, "sign-up"));
+    assert.equal(message, EMAIL_DELIVERY_MESSAGE);
+    assert.match(message, /couldn't send your email/);
+    assert.match(logged, /"emailDelivery":"FAILED"/);
+    assert.match(logged, /SMTP/);
+    // Not the hint for a wrong Supabase URL or key, which this is not.
+    assert.doesNotMatch(logged, /api\/health/);
+    assert.ok(!logged.includes("private-address@example.com"));
+  });
+
+  it("recognises the same failure for a password reset, and nothing else as it", async () => {
+    const reset = await clientAnswering(500, { ...UNDELIVERED, msg: "Error sending recovery email" }).supabase.auth.resetPasswordForEmail("student@example.com");
+    assert.equal(emailDeliveryFailed(reset.error), true);
+
+    const outage = await clientAnswering(503, { message: "upstream unavailable" }).supabase.auth.signUp({ email: "a@example.com", password: "correct horse battery 1" });
+    assert.equal(emailDeliveryFailed(outage.error), false);
+    assert.match(silently(() => friendlyAuthError(outage.error, "sign-up")).result, /temporarily unavailable/);
+
+    const limited = await clientAnswering(429, PROJECT_LIMIT).supabase.auth.signUp({ email: "a@example.com", password: "correct horse battery 1" });
+    assert.equal(emailDeliveryFailed(limited.error), false);
   });
 });
 
